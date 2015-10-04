@@ -8,6 +8,9 @@
 
 import UIKit
 
+private let logger = Log(level: .Warn)
+
+
 
 private let BitsPerComponent = 5
 private func bytesPerRowForWidth(width: Int) -> Int { return width * 2 }
@@ -58,7 +61,7 @@ public class ImagePreviewStore {
     private var appWillBackgroundToken: NSObjectProtocol? = nil
     public init(baseURL: NSURL) {
         self.baseURL = baseURL
-        try! NSFileManager.defaultManager().createDirectoryAtURL(baseURL, withIntermediateDirectories: false, attributes: nil)
+        try! NSFileManager.defaultManager().createDirectoryAtURL(baseURL, withIntermediateDirectories: true, attributes: nil)
         appWillBackgroundToken = NSNotificationCenter.defaultCenter().addObserverForName(UIApplicationDidEnterBackgroundNotification, object: nil, queue: nil) { [weak self] _ in
             self?.cache.removeAllObjects()
         }
@@ -82,13 +85,25 @@ public class ImagePreviewStore {
             try generator.writeToFileAtURL(fileURLForName(name))
             return true
         } catch let e {
-            print("\(e)")
+            logger.error("Unable to write preview: \(e)")
         }
         return false
     }
     func fileURLForName(name: String) -> NSURL {
         let filename = name.stringByAddingPercentEncodingWithAllowedCharacters(NSCharacterSet.alphanumericCharacterSet())!
         return baseURL.URLByAppendingPathComponent(filename)
+    }
+}
+
+extension ImagePreviewStore {
+    public func missingPreviewsForNames(names: [String]) -> [String] {
+        var missing: [String] = []
+        for name in names {
+            if fileURLForName(name).fileResourceIdentifier == nil {
+                missing.append(name)
+            }
+        }
+        return missing
     }
 }
 

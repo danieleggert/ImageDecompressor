@@ -9,29 +9,82 @@
 import UIKit
 
 
-
+/// This class decodes images into a bitmap buffer and returns a new image from that data.
+/// The resulting image hence no longer has to be decoded (from JPEG / PNG) to be used. That way the UI
+/// thread isn't blocked for decoding.
+///
+/// The `ImageLoader` class uses a cache such that a subsequent call to an image may return the image from
+/// that cache. The cache contains purgeable data such that the resulting pressure is low except for images
+/// currently in use.
 public class ImageLoader {
-    private let baseURL: NSURL
     private let cache = NSCache()
     private var appWillBackgroundToken: NSObjectProtocol? = nil
     private let workQueue = NSOperationQueue()
-    public init(baseURL: NSURL) {
-        self.baseURL = baseURL
+    private let callbackQueue: dispatch_queue_t
+    private var beingDecompressed: [(String,DecompressionHandler)] = []
+    public init(callbackQueue: dispatch_queue_t) {
+        self.callbackQueue = callbackQueue
         appWillBackgroundToken = NSNotificationCenter.defaultCenter().addObserverForName(UIApplicationDidEnterBackgroundNotification, object: nil, queue: nil) { [weak self] _ in
             self?.cache.removeAllObjects()
         }
         workQueue.name = "ImageLoader"
         workQueue.qualityOfService = .Utility
+        workQueue.maxConcurrentOperationCount = 3
     }
-    public func imageAtURL(fileURL: NSURL, forKey key: String) -> UIImage? {
-        if let image = cache.objectForKey(key) as? UIImage {
-            return image
+    public typealias DecompressionHandler = (UIImage?) -> ()
+    public func imageWithData(imageData: () -> NSData?, forKey key: String, decompressionHandler: DecompressionHandler) -> UIImage? {
+        return imageForKey(key, loadOriginal: { imageData().flatMap { UIImage(data: $0) } }, decompressionHandler: decompressionHandler)
+    }
+    public func imageAtURL(fileURL: NSURL, forKey key: String, decompressionHandler: DecompressionHandler) -> UIImage? {
+        return imageForKey(key, loadOriginal: {
+            guard let path = fileURL.path, let compressedImage = UIImage(contentsOfFile: path) else {
+                return nil
+            }
+            return compressedImage
+        }, decompressionHandler: decompressionHandler)
+    }
+}
+
+extension ImageLoader {
+    private func imageForKey(key: String, loadOriginal: () -> UIImage?, decompressionHandler: DecompressionHandler) -> UIImage? {
+        if let bitmap = cache.objectForKey(key) as? PurgeableImageBitmapData {
+            if let image = bitmap.createImage() {
+                return image
+            } else {
+                cache.removeObjectForKey(key)
+            }
         }
-        do {
-//            cache.setObject(image, forKey: key)
-//            return image
-        } catch {}
+        if !checkExistsAndAddKey(key, handler: decompressionHandler) {
+            workQueue.addOperationWithBlock { [weak self] in
+                if let compressedImage = loadOriginal(),
+                    let bitmap = PurgeableImageBitmapData(image: compressedImage) {
+                        self?.cache.setObject(bitmap, forKey: key)
+                        let image = bitmap.createImage()
+                        bitmap.endContentAccess() // Starts out as 'begin access', need to balance.
+                        self?.didDecompressImage(image, forKey: key)
+                        return
+                }
+                self?.didDecompressImage(nil, forKey: key)
+            }
+        }
         return nil
+    }
+    
+    private func checkExistsAndAddKey(key: String, handler: DecompressionHandler) -> Bool {
+        let keyExists = beingDecompressed.indexOf({ $0.0 == key }) != nil
+        beingDecompressed.append((key, handler))
+        return keyExists
+    }
+    
+    private func didDecompressImage(image: UIImage?, forKey key: String) {
+        dispatch_async(callbackQueue) { [weak self] in
+            guard let loader = self else { return }
+            while let idx = loader.beingDecompressed.indexOf({ $0.0 == key }) {
+                let handler = loader.beingDecompressed[idx].1
+                loader.beingDecompressed.removeAtIndex(idx)
+                handler(image)
+            }
+        }
     }
 }
 
@@ -99,7 +152,7 @@ struct BitmapInfo {
     let bitmapInfo: CGBitmapInfo
     init(image: CGImage) {
         width = CGImageGetWidth(image)
-        height = CGImageGetWidth(image)
+        height = CGImageGetHeight(image)
         if CGColorSpaceGetModel(CGImageGetColorSpace(image)) == .RGB {
             bitsPerPixel = CGImageGetBitsPerPixel(image)
             bitsPerComponent = CGImageGetBitsPerComponent(image)
