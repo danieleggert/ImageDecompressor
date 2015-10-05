@@ -10,7 +10,13 @@ import UIKit
 
 private let logger = Log(level: .Warn)
 
-
+private func rgbColorSpace() -> CGColorSpace {
+    if #available(iOS 9.0, *) {
+        return CGColorSpaceCreateWithName(kCGColorSpaceSRGB)!
+    } else {
+        return CGColorSpaceCreateDeviceRGB()!
+    }
+}
 
 private let BitsPerComponent = 5
 private func bytesPerRowForWidth(width: Int) -> Int { return width * 2 }
@@ -30,7 +36,7 @@ struct ImagePreviewDataGenerator {
         let width = Int(floor(Double(fullWidth) * scale))
         let height = Int(floor(Double(fullHeight) * Double(width) / Double(fullWidth)))
         
-        let space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB)!
+        let space = rgbColorSpace()
         let mutableData = NSMutableData(length: height * 2 * width)!
         let ctx = CGBitmapContextCreateWithData(mutableData.mutableBytes,
             width, height, BitsPerComponent, bytesPerRowForWidth(width), space, PreviewBitmapInfo,
@@ -132,7 +138,7 @@ private func imageFromMappedData(data: NSData) -> (CGImage,ImagePreviewHeader)? 
         Unmanaged<NSData>.fromOpaque(pointer).release()
         return
     }
-    let space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB)!
+    let space = rgbColorSpace()
     let provider = CGDataProviderCreateWithData(info, bytes, size, releaseInfo)
     guard let image = CGImageCreate(header.width, header.height, BitsPerComponent, 16, bytesPerRowForWidth(header.width), space, CGBitmapInfo(rawValue:PreviewBitmapInfo), provider, nil, true, .RenderingIntentDefault) else { return nil }
     return (image, header)

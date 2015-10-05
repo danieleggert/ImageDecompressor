@@ -171,7 +171,7 @@ struct BitmapInfo {
         bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.PremultipliedFirst.rawValue)
     }
     func createImageWithDataProvider(provider: CGDataProvider) -> CGImage? {
-        let space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB)
+        let space = rgbColorSpace()
         return CGImageCreate(width, height, bitsPerComponent, bitsPerPixel, bytesPerRow, space, bitmapInfo, provider, nil, true, .RenderingIntentDefault)
     }
 }
@@ -187,7 +187,7 @@ extension BitmapInfo {
         return CGRect(x: 0, y: 0, width: width, height: height)
     }
     func withBitmapContextWithData(data: NSMutableData, @noescape block: (CGContext) -> ()) -> Bool {
-        let space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB)
+        let space = rgbColorSpace()
         if let ctx = CGBitmapContextCreate(UnsafeMutablePointer<Void>(data.mutableBytes), width, height, bitsPerComponent, bytesPerRow, space, bitmapInfo.rawValue) {
             block(ctx)
             return true
@@ -207,4 +207,12 @@ func createBitmapDataForImage(image: CGImage) -> (NSPurgeableData,BitmapInfo)? {
         return (data,bitmapInfo)
     }
     return nil
+}
+
+private func rgbColorSpace() -> CGColorSpace {
+    if #available(iOS 9.0, *) {
+        return CGColorSpaceCreateWithName(kCGColorSpaceSRGB)!
+    } else {
+        return CGColorSpaceCreateDeviceRGB()!
+    }
 }
