@@ -17,6 +17,13 @@ import UIKit
 /// that cache. The cache contains purgeable data such that the resulting pressure is low except for images
 /// currently in use.
 public class ImageLoader {
+    public enum TargetSize {
+        /// No downsampling.
+        case Full
+        /// Downsample the image to the specified width.
+        case Width(CGFloat)
+    }
+    
     private let cache = NSCache()
     private var appWillBackgroundToken: NSObjectProtocol? = nil
     private let workQueue = NSOperationQueue()
@@ -32,11 +39,11 @@ public class ImageLoader {
         workQueue.maxConcurrentOperationCount = 3
     }
     public typealias DecompressionHandler = (UIImage?) -> ()
-    public func imageWithData(imageData: () -> NSData?, forKey key: String, decompressionHandler: DecompressionHandler) -> UIImage? {
-        return imageForKey(key, loadOriginal: { imageData().flatMap { UIImage(data: $0) } }, decompressionHandler: decompressionHandler)
+    public func imageWithData(imageData: () -> NSData?, forKey key: String, targetSize: TargetSize, decompressionHandler: DecompressionHandler) -> UIImage? {
+        return imageForKey(key, targetSize: targetSize, loadOriginal: { imageData().flatMap { UIImage(data: $0) } }, decompressionHandler: decompressionHandler)
     }
-    public func imageAtURL(fileURL: NSURL, forKey key: String, decompressionHandler: DecompressionHandler) -> UIImage? {
-        return imageForKey(key, loadOriginal: {
+    public func imageAtURL(fileURL: NSURL, forKey key: String, targetSize: TargetSize, decompressionHandler: DecompressionHandler) -> UIImage? {
+        return imageForKey(key, targetSize: targetSize, loadOriginal: {
             guard let path = fileURL.path, let compressedImage = UIImage(contentsOfFile: path) else {
                 return nil
             }
@@ -46,7 +53,7 @@ public class ImageLoader {
 }
 
 extension ImageLoader {
-    private func imageForKey(key: String, loadOriginal: () -> UIImage?, decompressionHandler: DecompressionHandler) -> UIImage? {
+    private func imageForKey(key: String, targetSize: TargetSize, loadOriginal: () -> UIImage?, decompressionHandler: DecompressionHandler) -> UIImage? {
         if let bitmap = cache.objectForKey(key) as? PurgeableImageBitmapData {
             if let image = bitmap.createImage() {
                 return image
@@ -57,7 +64,7 @@ extension ImageLoader {
         if !checkExistsAndAddKey(key, handler: decompressionHandler) {
             workQueue.addOperationWithBlock { [weak self] in
                 if let compressedImage = loadOriginal(),
-                    let bitmap = PurgeableImageBitmapData(image: compressedImage) {
+                    let bitmap = PurgeableImageBitmapData(image: compressedImage, targetSize: targetSize) {
                         self?.cache.setObject(bitmap, forKey: key)
                         let image = bitmap.createImage()
                         bitmap.endContentAccess() // Starts out as 'begin access', need to balance.
@@ -117,10 +124,10 @@ extension PurgeableImageBitmapData : NSDiscardableContent {
 
 
 private extension PurgeableImageBitmapData {
-    convenience init?(image: UIImage) {
+    convenience init?(image: UIImage, targetSize: ImageLoader.TargetSize) {
         guard
             let cgImage = image.CGImage,
-            let (data, info) = createBitmapDataForImage(cgImage)
+            let (data, info) = createBitmapDataForImage(cgImage, targetSize: targetSize)
             else { return nil }
         self.init(data: data, bitmapInfo: info, orientation: image.imageOrientation)
     }
@@ -150,9 +157,22 @@ struct BitmapInfo {
     let bitsPerPixel: Int
     let bitsPerComponent: Int
     let bitmapInfo: CGBitmapInfo
-    init(image: CGImage) {
-        width = CGImageGetWidth(image)
-        height = CGImageGetHeight(image)
+    init(image: CGImage, targetSize: ImageLoader.TargetSize) {
+        switch targetSize {
+        case .Full:
+            width = CGImageGetWidth(image)
+            height = CGImageGetHeight(image)
+        case .Width(let w):
+            let ww = Int(ceil(w))
+            if ww < CGImageGetWidth(image) {
+                width = ww
+                let scale = w / CGFloat(CGImageGetWidth(image))
+                height = Int(round(CGFloat(CGImageGetHeight(image)) * scale))
+            } else {
+                width = CGImageGetWidth(image)
+                height = CGImageGetHeight(image)
+            }
+        }
         if CGColorSpaceGetModel(CGImageGetColorSpace(image)) == .RGB {
             bitsPerPixel = CGImageGetBitsPerPixel(image)
             bitsPerComponent = CGImageGetBitsPerComponent(image)
@@ -197,8 +217,8 @@ extension BitmapInfo {
     }
 }
 
-func createBitmapDataForImage(image: CGImage) -> (NSPurgeableData,BitmapInfo)? {
-    let bitmapInfo = BitmapInfo(image: image)
+func createBitmapDataForImage(image: CGImage, targetSize: ImageLoader.TargetSize) -> (NSPurgeableData,BitmapInfo)? {
+    let bitmapInfo = BitmapInfo(image: image, targetSize: targetSize)
     guard let data = NSPurgeableData(length: bitmapInfo.bufferLength) else { return nil }
     let success = bitmapInfo.withBitmapContextWithData(data) { ctx in
         CGContextDrawImage(ctx, bitmapInfo.bounds, image)
