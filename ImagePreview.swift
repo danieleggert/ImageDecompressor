@@ -34,7 +34,7 @@ struct ImagePreviewDataGenerator {
         let targetPixelCount = 2500
         let scale = sqrt(Double(targetPixelCount) / Double(fullHeight * fullWidth))
         let width = Int(floor(Double(fullWidth) * scale))
-        let height = Int(floor(Double(fullHeight) * Double(width) / Double(fullWidth)))
+        let height = Int(round(Double(fullHeight) * Double(width) / Double(fullWidth)))
         
         let space = rgbColorSpace()
         let mutableData = NSMutableData(length: height * 2 * width)!

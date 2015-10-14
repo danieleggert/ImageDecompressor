@@ -56,7 +56,7 @@ final class ImagePreviewTests: XCTestCase {
         XCTAssertTrue(success)
         let preview = sut.imageWithName(name)
         XCTAssertNotNil(preview)
-        XCTAssertEqualWithAccuracy(preview!.size.height, 3264, accuracy: 0.5)
-        XCTAssertEqualWithAccuracy(preview!.size.width, 2462, accuracy: 0.5)
+        XCTAssertEqualWithAccuracy(preview!.size.width, image.size.width, accuracy: image.size.width * 0.01)
+        XCTAssertEqualWithAccuracy(preview!.size.height, image.size.height, accuracy: image.size.height * 0.01)
     }
 }
