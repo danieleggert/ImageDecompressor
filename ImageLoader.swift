@@ -39,6 +39,11 @@ public class ImageLoader {
         workQueue.maxConcurrentOperationCount = 3
     }
     public typealias DecompressionHandler = (UIImage?) -> ()
+    public func imageNamed(name: String, inBundle bundle: NSBundle, forKey key: String, targetSize: TargetSize, decompressionHandler: DecompressionHandler) -> UIImage? {
+        return imageForKey(key, targetSize: targetSize, loadOriginal: {
+            UIImage(named: name, inBundle: bundle, compatibleWithTraitCollection: nil)
+            }, decompressionHandler: decompressionHandler)
+    }
     public func imageWithData(imageData: () -> NSData?, forKey key: String, targetSize: TargetSize, decompressionHandler: DecompressionHandler) -> UIImage? {
         return imageForKey(key, targetSize: targetSize, loadOriginal: { imageData().flatMap { UIImage(data: $0) } }, decompressionHandler: decompressionHandler)
     }
