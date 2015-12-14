@@ -38,27 +38,39 @@ public class ImageLoader {
         workQueue.qualityOfService = .Utility
         workQueue.maxConcurrentOperationCount = 3
     }
+    private typealias LoadOriginalType = ((UIImage?) -> ()) -> ()
     public typealias DecompressionHandler = (UIImage?) -> ()
     public func imageNamed(name: String, inBundle bundle: NSBundle, forKey key: String, targetSize: TargetSize, decompressionHandler: DecompressionHandler) -> UIImage? {
-        return imageForKey(key, targetSize: targetSize, loadOriginal: {
-            UIImage(named: name, inBundle: bundle, compatibleWithTraitCollection: nil)
-            }, decompressionHandler: decompressionHandler)
+        let load: LoadOriginalType = { (completion: (UIImage?) -> ()) -> () in
+            dispatch_async(dispatch_get_main_queue()) {
+                completion(UIImage(named: name, inBundle: bundle, compatibleWithTraitCollection: nil))
+            }
+        }
+        return imageForKey(key, targetSize: targetSize, loadOriginal: load, decompressionHandler: decompressionHandler)
     }
     public func imageWithData(imageData: () -> NSData?, forKey key: String, targetSize: TargetSize, decompressionHandler: DecompressionHandler) -> UIImage? {
-        return imageForKey(key, targetSize: targetSize, loadOriginal: { imageData().flatMap { UIImage(data: $0) } }, decompressionHandler: decompressionHandler)
+        let load: LoadOriginalType = { (completion: (UIImage?) -> ()) -> () in
+            let image = imageData().flatMap { UIImage(data: $0) }
+            completion(image)
+        }
+        return imageForKey(key, targetSize: targetSize, loadOriginal: load, decompressionHandler: decompressionHandler)
     }
     public func imageAtURL(fileURL: NSURL, forKey key: String, targetSize: TargetSize, decompressionHandler: DecompressionHandler) -> UIImage? {
-        return imageForKey(key, targetSize: targetSize, loadOriginal: {
-            guard let path = fileURL.path, let compressedImage = UIImage(contentsOfFile: path) else {
-                return nil
+        let load: LoadOriginalType = { (completion: (UIImage?) -> ()) -> () in
+            dispatch_async(dispatch_get_main_queue()) {
+                guard let path = fileURL.path, let compressedImage = UIImage(contentsOfFile: path) else {
+                    completion(nil)
+                    return
+                }
+                completion(compressedImage)
             }
-            return compressedImage
-        }, decompressionHandler: decompressionHandler)
+        }
+        return imageForKey(key, targetSize: targetSize, loadOriginal: load, decompressionHandler: decompressionHandler)
     }
 }
 
 extension ImageLoader {
-    private func imageForKey(key: String, targetSize: TargetSize, loadOriginal: () -> UIImage?, decompressionHandler: DecompressionHandler) -> UIImage? {
+    private func imageForKey(key: String, targetSize: TargetSize, loadOriginal: LoadOriginalType, decompressionHandler: DecompressionHandler) -> UIImage? {
         if let bitmap = cache.objectForKey(key) as? PurgeableImageBitmapData {
             if let image = bitmap.createImage() {
                 return image
@@ -68,15 +80,21 @@ extension ImageLoader {
         }
         if !checkExistsAndAddKey(key, handler: decompressionHandler) {
             workQueue.addOperationWithBlock { [weak self] in
-                if let compressedImage = loadOriginal(),
-                    let bitmap = PurgeableImageBitmapData(image: compressedImage, targetSize: targetSize) {
+                loadOriginal() { maybeImage in
+                    self?.workQueue.addOperationWithBlock { [weak self] in
+                        guard
+                            let compressedImage = maybeImage,
+                            let bitmap = PurgeableImageBitmapData(image: compressedImage, targetSize: targetSize)
+                            else {
+                                self?.didDecompressImage(nil, forKey: key)
+                                return
+                        }
                         self?.cache.setObject(bitmap, forKey: key)
                         let image = bitmap.createImage()
                         bitmap.endContentAccess() // Starts out as 'begin access', need to balance.
                         self?.didDecompressImage(image, forKey: key)
-                        return
+                    }
                 }
-                self?.didDecompressImage(nil, forKey: key)
             }
         }
         return nil
