@@ -8,7 +8,7 @@
 
 import UIKit
 
-private let logger = Log(level: .Warn)
+
 
 private func rgbColorSpace() -> CGColorSpace {
     if #available(iOS 9.0, *) {
@@ -27,7 +27,7 @@ struct ImagePreviewDataGenerator {
         guard let cgImage = image.CGImage else { return nil }
         self.init(image: cgImage, orientation: image.imageOrientation)
     }
-    init(image: CGImage, orientation: UIImageOrientation) {
+    init?(image: CGImage, orientation: UIImageOrientation) {
         let fullWidth = CGImageGetWidth(image)
         let fullHeight = CGImageGetHeight(image)
         
@@ -38,9 +38,11 @@ struct ImagePreviewDataGenerator {
         
         let space = rgbColorSpace()
         let mutableData = NSMutableData(length: height * 2 * width)!
-        let ctx = CGBitmapContextCreateWithData(mutableData.mutableBytes,
+        guard let ctx = CGBitmapContextCreateWithData(mutableData.mutableBytes,
             width, height, BitsPerComponent, bytesPerRowForWidth(width), space, PreviewBitmapInfo,
-            nil, UnsafeMutablePointer<Void>())
+            nil, UnsafeMutablePointer<Void>()) else {
+                return nil
+        }
         CGContextDrawImage(ctx, CGRect(x: 0, y: 0, width: width, height: height), image)
         self.imageData = mutableData
         self.header = ImagePreviewHeader(fullWidth: fullWidth, fullHeight: fullHeight, width: width, height: height, orientation: orientation)
@@ -91,7 +93,7 @@ public class ImagePreviewStore {
             try generator.writeToFileAtURL(fileURLForName(name))
             return true
         } catch let e {
-            logger.error("Unable to write preview: \(e)")
+            print("Unable to write preview: \(e)")
         }
         return false
     }

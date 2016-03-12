@@ -49,11 +49,11 @@ public class ImageLoader {
         return imageForKey(key, targetSize: targetSize, loadOriginal: load, decompressionHandler: decompressionHandler)
     }
     public func imageWithData(imageData: () -> NSData?, forKey key: String, targetSize: TargetSize, decompressionHandler: DecompressionHandler) -> UIImage? {
-        let load: LoadOriginalType = { (completion: (UIImage?) -> ()) -> () in
+        let loadOriginal: LoadOriginalType = { (completion: (UIImage?) -> ()) -> () in
             let image = imageData().flatMap { UIImage(data: $0) }
             completion(image)
         }
-        return imageForKey(key, targetSize: targetSize, loadOriginal: load, decompressionHandler: decompressionHandler)
+        return imageForKey(key, targetSize: targetSize, loadOriginal: loadOriginal, decompressionHandler: decompressionHandler)
     }
     public func imageAtURL(fileURL: NSURL, forKey key: String, targetSize: TargetSize, decompressionHandler: DecompressionHandler) -> UIImage? {
         let load: LoadOriginalType = { (completion: (UIImage?) -> ()) -> () in
@@ -79,21 +79,19 @@ extension ImageLoader {
             }
         }
         if !checkExistsAndAddKey(key, handler: decompressionHandler) {
-            workQueue.addOperationWithBlock { [weak self] in
-                loadOriginal() { maybeImage in
-                    self?.workQueue.addOperationWithBlock { [weak self] in
-                        guard
-                            let compressedImage = maybeImage,
-                            let bitmap = PurgeableImageBitmapData(image: compressedImage, targetSize: targetSize)
-                            else {
-                                self?.didDecompressImage(nil, forKey: key)
-                                return
-                        }
-                        self?.cache.setObject(bitmap, forKey: key)
-                        let image = bitmap.createImage()
-                        bitmap.endContentAccess() // Starts out as 'begin access', need to balance.
-                        self?.didDecompressImage(image, forKey: key)
+            loadOriginal() { maybeImage in
+                self.workQueue.addOperationWithBlock { [weak self] in
+                    guard
+                        let compressedImage = maybeImage,
+                        let bitmap = PurgeableImageBitmapData(image: compressedImage, targetSize: targetSize)
+                        else {
+                            self?.didDecompressImage(nil, forKey: key)
+                            return
                     }
+                    self?.cache.setObject(bitmap, forKey: key)
+                    let image = bitmap.createImage()
+                    bitmap.endContentAccess() // Starts out as 'begin access', need to balance.
+                    self?.didDecompressImage(image, forKey: key)
                 }
             }
         }
@@ -196,20 +194,14 @@ struct BitmapInfo {
                 height = CGImageGetHeight(image)
             }
         }
-        if CGColorSpaceGetModel(CGImageGetColorSpace(image)) == .RGB {
-            bitsPerPixel = CGImageGetBitsPerPixel(image)
-            bitsPerComponent = CGImageGetBitsPerComponent(image)
-            bitmapInfo = CGImageGetBitmapInfo(image)
-        } else {
-            bitsPerPixel = 24
-            bitsPerComponent = 8
-            bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.PremultipliedFirst.rawValue)
-        }
+        bitsPerPixel = 8 * 4
+        bitsPerComponent = 8
+        bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.PremultipliedFirst.rawValue)
     }
     init(dimensionsFromImage image: CGImage) {
         width = CGImageGetWidth(image)
         height = CGImageGetWidth(image)
-        bitsPerPixel = 24
+        bitsPerPixel = 8 * 4
         bitsPerComponent = 8
         bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.PremultipliedFirst.rawValue)
     }
@@ -230,13 +222,18 @@ extension BitmapInfo {
         return CGRect(x: 0, y: 0, width: width, height: height)
     }
     func withBitmapContextWithData(data: NSMutableData, @noescape block: (CGContext) -> ()) -> Bool {
-        let space = rgbColorSpace()
-        if let ctx = CGBitmapContextCreate(UnsafeMutablePointer<Void>(data.mutableBytes), width, height, bitsPerComponent, bytesPerRow, space, bitmapInfo.rawValue) {
-            block(ctx)
-            return true
-        } else {
-            return false
+        return withExtendedLifetime(data) {
+            if let ctx = createBitmapContextForData(data) {
+                block(ctx)
+                return true
+            } else {
+                return false
+            }
         }
+    }
+    private func createBitmapContextForData(data: NSMutableData) -> CGContext? {
+        let space = rgbColorSpace()
+        return CGBitmapContextCreate(UnsafeMutablePointer<Void>(data.mutableBytes), width, height, bitsPerComponent, bytesPerRow, space, bitmapInfo.rawValue)
     }
 }
 
@@ -253,9 +250,5 @@ func createBitmapDataForImage(image: CGImage, targetSize: ImageLoader.TargetSize
 }
 
 private func rgbColorSpace() -> CGColorSpace {
-    if #available(iOS 9.0, *) {
-        return CGColorSpaceCreateWithName(kCGColorSpaceSRGB)!
-    } else {
-        return CGColorSpaceCreateDeviceRGB()!
-    }
+    return CGColorSpaceCreateWithName(kCGColorSpaceSRGB)!
 }
